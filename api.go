@@ -43,6 +43,7 @@ func (s *APIServer) Run(){
 	router := mux.NewRouter()
 
 	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleAccount) )
+	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleGetAccount) )
 
 	log.Println("API listening on: ", s.listenAddr)
 
@@ -59,14 +60,16 @@ func (s *APIServer) handleAccount(w http.ResponseWriter, r *http.Request) error 
 	if(r.Method == "DELETE"){
 		return s.handleDeleteAccount(w,r)
 	}
-	if(r.Method == "GET"){
-		return s.handleAccount(w,r)
-	}
+	
 	return fmt.Errorf("method not allowed! %s", r.Method)
 }
 
 func (s *APIServer) handleGetAccount(w http.ResponseWriter, r *http.Request) error {
-	return nil
+	id := mux.Vars(r)["id"]
+	fmt.Println(id)
+	// account := NewAccount("Elvis", "Osuji")
+
+	return WriteJSON(w, http.StatusOK, &Account{})
 }
 
 func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) error {
