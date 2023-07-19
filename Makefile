@@ -5,7 +5,7 @@ nodemon:
 	nodemon --watch './**/*.go' --signal SIGTERM --exec go build -o bin/vizubank
 
 run: build
-	./bin/vizubank
+	@./bin/vizubank
 
 test:
 	@go test -v ./...
