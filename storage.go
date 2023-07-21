@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 
 	_ "github.com/lib/pq"
 )
@@ -45,7 +46,7 @@ func (s *PostgresStore) createAccountTable() error {
 		id serial primary key,
 		first_name varchar(100) NOT NULL,
 		last_name varchar(100) NOT NULL,
-		acc_number serial NOT NULL,
+		acc_number serial NOT NULL UNIQUE,
 		balance serial NOT NULL,
 		created_at timestamp NOT NULL
 	)`
@@ -83,11 +84,29 @@ func (s *PostgresStore) UpdateAccount(*Account) error {
 }
 
 func (s *PostgresStore) DeleteAccount(id int) error {
+	query := `DELETE FROM account WHERE id = $1`
+	_, err := s.db.Query(query, id)
+
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (s *PostgresStore) GetAccountByID(id int) (*Account, error) {
-	return nil,nil
+	query := `SELECT * FROM account WHERE id = $1`
+	rows,err :=s.db.Query(query, id )
+
+	if err != nil {
+		return nil, err
+	}
+
+	for rows.Next(){
+		return scanIntoAccount(rows)
+	}
+
+	return nil,fmt.Errorf("account %d not found", id)
 }
 
 func (s *PostgresStore) GetAccounts() ([]*Account, error) {
@@ -104,7 +123,19 @@ func (s *PostgresStore) GetAccounts() ([]*Account, error) {
 	accounts := []*Account{}
 
 	for rows.Next() {
-		account := new(Account)
+		account, err := scanIntoAccount(rows)
+
+		if err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, account) 
+	}
+
+	return accounts, nil
+}
+
+func scanIntoAccount(rows *sql.Rows) (*Account, error) {
+	account := new(Account)
 		err := rows.Scan(
 			&account.ID,
 			&account.FirstName, 
@@ -114,12 +145,5 @@ func (s *PostgresStore) GetAccounts() ([]*Account, error) {
 			&account.CreatedAt);
 		
 
-		if err != nil {
-			return nil,err
-		}
-
-		accounts = append(accounts, account) 
-	}
-
-	return accounts, nil
+		return account, err
 }
