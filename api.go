@@ -5,15 +5,100 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
 
+	jwt "github.com/golang-jwt/jwt/v4"
 	"github.com/gorilla/mux"
 )
+
+func permissionDenied(w http.ResponseWriter) {
+	WriteJSON(w, http.StatusForbidden, ApiError{Error: "access denied"})
+}
+
+const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2NvdW50TnVtIjo4NjQ0MDQ1LCJleHBpcmVzQXQiOjE1MTYyMzkwMjJ9.GI7VSt6Iidf-FYstYgPGDNb-EM13Y085LA_6Wb2Wyxk"
 	
 func WriteJSON(w http.ResponseWriter, status int, v interface{}) error {
 	w.WriteHeader(status)
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(v)
+}
+
+func withJWTAuth(handlerFunc http.HandlerFunc, s Storage) http.HandlerFunc {
+	
+	return func(w http.ResponseWriter, r *http.Request) {
+	// fmt.Println("Calling JWT middleware")
+
+		tokenString := r.Header.Get("x-jwt-token")
+		token, err := validateJWT(tokenString)
+
+		if err != nil {
+			permissionDenied(w)
+			return 
+		}
+		if !token.Valid {
+			permissionDenied(w)
+			return 
+		}
+
+		idStr := mux.Vars(r)["id"]
+		id, err := strconv.Atoi(idStr)
+	
+		if err != nil {
+			WriteJSON(w, http.StatusNotFound, ApiError{Error: "invalid id"})
+			return 
+		}
+
+		account, err := s.GetAccountByID(id)
+		
+
+		if err != nil {
+			WriteJSON(w, http.StatusNotFound, ApiError{Error: "invalid id"})
+			return 
+		}
+
+		claims := token.Claims.(jwt.MapClaims)
+		// panic(reflect.TypeOf(claims["accountNum"]))
+		// fmt.Println(claims["accountNum"])
+		// fmt.Println(account.AccNumber)
+
+
+		if account.AccNumber != int64((claims["accountNum"]).(float64)) {
+			 permissionDenied(w)
+			 return
+		}
+
+
+	handlerFunc(w,r)
+	}
+}
+
+func createJWT(acc *Account) (string, error) {
+
+	// Create the Claims
+claims := &jwt.MapClaims{
+	"expiresAt": jwt.NewNumericDate(time.Unix(1516239022, 0)),
+	"accountNum":  int64(acc.AccNumber),
+}
+secret := os.Getenv("JWT_SECRET")
+token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+ return token.SignedString([]byte(secret))
+
+
+}
+
+func validateJWT(tokenString string) (*jwt.Token ,error) {
+	secret := os.Getenv("JWT_SECRET")
+	return jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		// Don't forget to validate the alg is what you expect:
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+	
+		// hmacSampleSecret is a []byte containing your secret, e.g. []byte("my_secret_key")
+		return []byte(secret), nil
+	})
 }
 
 type apiFunc func (http.ResponseWriter, *http.Request) error  
@@ -46,7 +131,8 @@ func (s *APIServer) Run(){
 	router := mux.NewRouter()
 
 	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleAccount) )
-	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleGetAccountByID) )
+	router.HandleFunc("/account/{id}", withJWTAuth(makeHTTPHandleFunc(s.handleGetorDeleteAccountByID) , s.store)) 
+	router.HandleFunc("/transfer", makeHTTPHandleFunc(s.handleTransfer) )
 
 	log.Println("API listening on: ", s.listenAddr)
 
@@ -76,7 +162,10 @@ func (s *APIServer) handleGetAccount(w http.ResponseWriter, r *http.Request) err
 }
 
 
-func (s *APIServer) handleGetAccountByID(w http.ResponseWriter, r *http.Request) error {
+func (s *APIServer) handleGetorDeleteAccountByID(w http.ResponseWriter, r *http.Request) error {
+	
+	if r.Method == "GET"  {
+	
 	idStr := mux.Vars(r)["id"]
 	id, err := strconv.Atoi(idStr)
 
@@ -92,7 +181,16 @@ func (s *APIServer) handleGetAccountByID(w http.ResponseWriter, r *http.Request)
 
 
 	return WriteJSON(w, http.StatusOK, account)
+
+	}
+	if r.Method == "DELETE" {
+		
+	 return s.handleDeleteAccount(w,r)
+	}
+
+	return fmt.Errorf("method: %s not valid", r.Method)
 }
+
 
 func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) error {
 createAccReq := new(CreateAccountRequest)
@@ -103,6 +201,14 @@ if err := json.NewDecoder(r.Body).Decode(createAccReq); err != nil {
 	if err := s.store.CreateAccount(account); err != nil {
 		return err
 	}
+
+	tokenString,err := createJWT(account)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("JWTToken: ", tokenString)
+
 
 	return WriteJSON(w, http.StatusOK, account)
 }
@@ -126,5 +232,21 @@ func (s *APIServer) handleDeleteAccount(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *APIServer) handleTransfer(w http.ResponseWriter, r *http.Request) error {
-	return nil
+
+	if r.Method == "POST" {
+
+	
+	transferReq := new(TransferRequest)
+
+	if err := json.NewDecoder(r.Body).Decode(transferReq); err != nil {
+		return err
+	}
+	defer r.Body.Close()
+
+
+
+	return WriteJSON(w, http.StatusOK, transferReq)
+
+}
+return fmt.Errorf("method: %s not valid", r.Method)
 }
