@@ -130,6 +130,7 @@ func NewAPIServer(listenAddr string, store Storage) *APIServer {
 func (s *APIServer) Run(){
 	router := mux.NewRouter()
 
+	router.HandleFunc("/login", makeHTTPHandleFunc(s.handleLogin))
 	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleAccount) )
 	router.HandleFunc("/account/{id}", withJWTAuth(makeHTTPHandleFunc(s.handleGetorDeleteAccountByID) , s.store)) 
 	router.HandleFunc("/transfer", makeHTTPHandleFunc(s.handleTransfer) )
@@ -138,7 +139,40 @@ func (s *APIServer) Run(){
 
 	http.ListenAndServe(s.listenAddr, router)
 }
+ // 4211409
+func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != "POST"{
+		return fmt.Errorf("method not allowed! %s", r.Method)
+	}
+	
+	var req LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return err
+	}
 
+	acc,err := s.store.GetAccountByNum(int(req.AccNumber))
+	if err != nil {
+		return err;
+	}
+
+	if !acc.ValidatePassword(req.Password) {
+		return fmt.Errorf("Invalid user details")
+	}
+
+	token, err := createJWT(acc)
+	if err != nil {
+		return nil
+	}
+
+	resp := LoginResp{
+		Token: token,
+		AccNumber: acc.AccNumber,
+	}
+
+	fmt.Printf("%+v\n", acc)
+
+	return WriteJSON(w, http.StatusOK, resp);
+}
 func (s *APIServer) handleAccount(w http.ResponseWriter, r *http.Request) error {
 	if(r.Method == "GET"){
 		return s.handleGetAccount(w,r)
@@ -197,17 +231,15 @@ createAccReq := new(CreateAccountRequest)
 if err := json.NewDecoder(r.Body).Decode(createAccReq); err != nil {
 	return err
 }
-	account := NewAccount(createAccReq.FirstName,createAccReq.LastName)
+	account,err := NewAccount(createAccReq.FirstName,createAccReq.LastName, createAccReq.Password)
+	if err != nil {
+		return err;
+	}
+	
 	if err := s.store.CreateAccount(account); err != nil {
 		return err
 	}
 
-	tokenString,err := createJWT(account)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("JWTToken: ", tokenString)
 
 
 	return WriteJSON(w, http.StatusOK, account)
